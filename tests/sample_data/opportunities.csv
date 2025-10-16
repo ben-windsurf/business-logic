@@ -1,0 +1,5 @@
+Id,AccountId,Name,StageName,Amount,CurrencyIsoCode,Probability,CloseDate,CreatedDate,LastModifiedDate,OwnerEmail,Phone,IsWon,IsClosed
+0061,0011,Large Renewal,Closed Won,120000,USD,95,2025-09-15,2025-05-10,2025-09-10,ae@corp.com,(415) 555-1212,true,true
+0062,0012,New Logo,Negotiation,80000,EUR,70,2025-10-01,2025-06-05,2025-09-20,sales@corp.com,+44 20 7946 0958,false,false
+0062,0012,New Logo,Negotiation,85000,EUR,72,2025-10-01,2025-06-05,2025-10-10,sales@corp.com,+44 20 7946 0958,false,false
+0063,0013,Expansion,Prospecting,50000,JPY,20,2025-11-30,2025-08-01,2025-09-15,rep@corp.com,011-81-3-1234-5678,false,false

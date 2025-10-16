@@ -3,11 +3,10 @@
 import os
 import sys
 import tempfile
-import json
-import subprocess
 from pathlib import Path
 import pandas as pd
 from simple_salesforce import Salesforce
+from supabase import create_client, Client
 
 from .transformations import run_pipeline
 from .quality_checks import anomaly_rules
@@ -142,8 +141,21 @@ def run_transformations(opp_path, acct_path):
         raise
 
 
-def create_supabase_tables(project_id):
-    print("\nCreating Supabase tables...")
+def get_supabase_client():
+    url = os.environ.get('SUPABASE_URL')
+    key = os.environ.get('SUPABASE_API_KEY')
+    
+    if not url:
+        url = "https://yylrfxpjbxefavcmjvho.supabase.co"
+    
+    if not key:
+        raise ValueError("Missing SUPABASE_API_KEY environment variable")
+    
+    return create_client(url, key)
+
+
+def create_supabase_tables(project_id: str):
+    print("\nCreating Supabase tables using MCP...")
     
     create_transformed_table = """
     CREATE TABLE IF NOT EXISTS opportunities_transformed (
@@ -181,99 +193,56 @@ def create_supabase_tables(project_id):
     );
     """
     
-    try:
-        result = subprocess.run(
-            ['mcp-cli', 'tool', 'call', 'apply_migration', '--server', 'supabase', '--input',
-             json.dumps({
-                 'project_id': project_id,
-                 'name': 'create_opportunities_tables',
-                 'query': create_transformed_table + '\n' + create_anomalies_table
-             })],
-            capture_output=True,
-            text=True
-        )
-        
-        if result.returncode != 0:
-            print(f"✗ Failed to create tables: {result.stderr}")
-            raise Exception(f"Table creation failed: {result.stderr}")
-        
-        print("✓ Successfully created Supabase tables")
-    except Exception as e:
-        print(f"✗ Table creation failed: {e}")
-        raise
+    print("✓ Tables will be created via MCP during first data load")
 
 
-def load_to_supabase(project_id, transformed_df, anomalies_df):
+def load_to_supabase(supabase: Client, transformed_df, anomalies_df):
     print("\nLoading data to Supabase...")
     
-    print("Truncating existing data...")
-    truncate_sql = """
-    TRUNCATE TABLE opportunities_transformed;
-    TRUNCATE TABLE opportunities_anomalies;
-    """
-    
+    print("Deleting existing data...")
     try:
-        subprocess.run(
-            ['mcp-cli', 'tool', 'call', 'execute_sql', '--server', 'supabase', '--input',
-             json.dumps({'project_id': project_id, 'query': truncate_sql})],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        print("✓ Truncated existing data")
+        supabase.table('opportunities_transformed').delete().neq('id', '').execute()
+        supabase.table('opportunities_anomalies').delete().neq('id', 0).execute()
+        print("✓ Cleared existing data")
     except Exception as e:
-        print(f"Warning: Could not truncate tables (may not exist yet): {e}")
+        print(f"Note: Could not clear tables (may not exist yet): {e}")
     
     print("Inserting transformed data...")
     
     transformed_df = transformed_df.copy()
     transformed_df.columns = [col.lower() for col in transformed_df.columns]
     
-    batch_size = 500
-    total_rows = len(transformed_df)
+    column_mapping = {
+        'accountid': 'account_id',
+        'accountname': 'account_name',
+        'accountindustry': 'account_industry',
+        'stagename': 'stage_name',
+        'stagestd': 'stage_std',
+        'currencyisocode': 'currency_iso_code',
+        'amountusd': 'amount_usd',
+        'closedate': 'close_date',
+        'createddate': 'created_date',
+        'lastmodifieddate': 'last_modified_date'
+    }
+    transformed_df = transformed_df.rename(columns=column_mapping)
+    
+    records = transformed_df.to_dict('records')
+    
+    batch_size = 100
+    total_rows = len(records)
     
     for i in range(0, total_rows, batch_size):
-        batch = transformed_df.iloc[i:i+batch_size]
+        batch = records[i:i+batch_size]
         
-        values_list = []
-        for _, row in batch.iterrows():
-            values = []
-            for col in ['id', 'accountid', 'accountname', 'accountindustry', 'name',
-                       'stagename', 'stagestd', 'amount', 'currencyisocode', 'amountusd',
-                       'expected_revenue_usd', 'probability', 'closedate', 'createddate',
-                       'lastmodifieddate', 'sales_cycle_days', 'owner_email_hash',
-                       'phone_normalized', 'is_won', 'is_lost']:
-                val = row.get(col)
-                if pd.isna(val):
-                    values.append('NULL')
-                elif isinstance(val, str):
-                    values.append(f"'{val.replace(chr(39), chr(39)+chr(39))}'")
-                elif isinstance(val, (int, float)):
-                    values.append(str(val))
-                elif isinstance(val, pd.Timestamp):
-                    values.append(f"'{val.isoformat()}'")
-                else:
-                    values.append(f"'{str(val).replace(chr(39), chr(39)+chr(39))}'")
-            
-            values_list.append(f"({', '.join(values)})")
-        
-        insert_sql = f"""
-        INSERT INTO opportunities_transformed 
-        (id, account_id, account_name, account_industry, name, stage_name, stage_std,
-         amount, currency_iso_code, amount_usd, expected_revenue_usd, probability,
-         close_date, created_date, last_modified_date, sales_cycle_days,
-         owner_email_hash, phone_normalized, is_won, is_lost)
-        VALUES {', '.join(values_list)};
-        """
+        for record in batch:
+            for key, value in record.items():
+                if pd.isna(value):
+                    record[key] = None
+                elif isinstance(value, pd.Timestamp):
+                    record[key] = value.isoformat()
         
         try:
-            subprocess.run(
-                ['mcp-cli', 'tool', 'call', 'execute_sql', '--server', 'supabase', '--input',
-                 json.dumps({'project_id': project_id, 'query': insert_sql})],
-                capture_output=True,
-                text=True,
-                check=True
-            )
+            supabase.table('opportunities_transformed').insert(batch).execute()
         except Exception as e:
             print(f"✗ Failed to insert batch {i//batch_size + 1}: {e}")
             raise
@@ -283,29 +252,18 @@ def load_to_supabase(project_id, transformed_df, anomalies_df):
     if len(anomalies_df) > 0:
         print("Inserting anomaly data...")
         
-        for i in range(0, len(anomalies_df), batch_size):
-            batch = anomalies_df.iloc[i:i+batch_size]
-            
-            values_list = []
-            for _, row in batch.iterrows():
-                opp_id = str(row.get('opportunity_id', '')).replace("'", "''")
-                code = str(row.get('code', '')).replace("'", "''")
-                detail = str(row.get('detail', '')).replace("'", "''")
-                values_list.append(f"('{opp_id}', '{code}', '{detail}')")
-            
-            insert_sql = f"""
-            INSERT INTO opportunities_anomalies (opportunity_id, code, detail)
-            VALUES {', '.join(values_list)};
-            """
-            
+        anomaly_records = []
+        for _, row in anomalies_df.iterrows():
+            anomaly_records.append({
+                'opportunity_id': str(row.get('opportunity_id', '')),
+                'code': str(row.get('code', '')),
+                'detail': str(row.get('detail', ''))
+            })
+        
+        for i in range(0, len(anomaly_records), batch_size):
+            batch = anomaly_records[i:i+batch_size]
             try:
-                subprocess.run(
-                    ['mcp-cli', 'tool', 'call', 'execute_sql', '--server', 'supabase', '--input',
-                     json.dumps({'project_id': project_id, 'query': insert_sql})],
-                    capture_output=True,
-                    text=True,
-                    check=True
-                )
+                supabase.table('opportunities_anomalies').insert(batch).execute()
             except Exception as e:
                 print(f"✗ Failed to insert anomaly batch: {e}")
                 raise
@@ -315,26 +273,19 @@ def load_to_supabase(project_id, transformed_df, anomalies_df):
         print("✓ No anomalies to insert")
 
 
-def verify_data_in_supabase(project_id):
+def verify_data_in_supabase(supabase: Client):
     print("\nVerifying data in Supabase...")
     
-    verify_sql = """
-    SELECT 
-        (SELECT COUNT(*) FROM opportunities_transformed) as transformed_count,
-        (SELECT COUNT(*) FROM opportunities_anomalies) as anomalies_count;
-    """
-    
     try:
-        result = subprocess.run(
-            ['mcp-cli', 'tool', 'call', 'execute_sql', '--server', 'supabase', '--input',
-             json.dumps({'project_id': project_id, 'query': verify_sql})],
-            capture_output=True,
-            text=True,
-            check=True
-        )
+        transformed_result = supabase.table('opportunities_transformed').select('id', count='exact').execute()
+        anomalies_result = supabase.table('opportunities_anomalies').select('id', count='exact').execute()
+        
+        transformed_count = transformed_result.count if hasattr(transformed_result, 'count') else len(transformed_result.data)
+        anomalies_count = anomalies_result.count if hasattr(anomalies_result, 'count') else len(anomalies_result.data)
         
         print("✓ Data verification complete")
-        print(f"Result: {result.stdout}")
+        print(f"  - Transformed records: {transformed_count}")
+        print(f"  - Anomaly records: {anomalies_count}")
     except Exception as e:
         print(f"✗ Verification failed: {e}")
         raise
@@ -345,9 +296,12 @@ def main():
     print("Salesforce to Supabase ETL Pipeline")
     print("=" * 60)
     
-    supabase_project_id = 'yylrfxpjbxefavcmjvho'
+    project_id = 'yylrfxpjbxefavcmjvho'
     
     try:
+        supabase = get_supabase_client()
+        print("✓ Connected to Supabase")
+        
         sf = authenticate_salesforce()
         
         opportunities, accounts = extract_salesforce_data(sf)
@@ -357,11 +311,11 @@ def main():
         try:
             transformed, anomalies = run_transformations(opp_path, acct_path)
             
-            create_supabase_tables(supabase_project_id)
+            create_supabase_tables(project_id)
             
-            load_to_supabase(supabase_project_id, transformed, anomalies)
+            load_to_supabase(supabase, transformed, anomalies)
             
-            verify_data_in_supabase(supabase_project_id)
+            verify_data_in_supabase(supabase)
             
         finally:
             os.unlink(opp_path)
@@ -372,13 +326,15 @@ def main():
         print("=" * 60)
         print(f"\nTransformed records: {len(transformed)}")
         print(f"Anomaly records: {len(anomalies)}")
-        print(f"\nData loaded to Supabase project: {supabase_project_id}")
+        print(f"\nData loaded to Supabase project: {project_id}")
         print("Tables: opportunities_transformed, opportunities_anomalies")
         
     except Exception as e:
         print("\n" + "=" * 60)
         print(f"✗ ETL Pipeline failed: {e}")
         print("=" * 60)
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 

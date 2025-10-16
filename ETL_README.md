@@ -4,19 +4,26 @@ This automated ETL pipeline extracts Opportunity and Account data from Salesforc
 
 ## Prerequisites
 
-1. **Environment Variables**: Set the following environment variables:
+1. **Supabase Tables**: Create the required tables in Supabase before running the ETL pipeline:
+   - Navigate to the Supabase SQL Editor for your Firefly project
+   - Run the SQL script from `create_supabase_tables.sql` in this repository
+   - This creates `opportunities_transformed` and `opportunities_anomalies` tables
+
+2. **Environment Variables**: Set the following environment variables:
    ```bash
    export SALESFORCE_USERNAME="your-salesforce-username"
    export SALESFORCE_PASSWORD="your-salesforce-password"
    export SALESFORCE_URL="https://your-instance.salesforce.com"
+   export SUPABASE_API_KEY="your-supabase-api-key"
+   export SUPABASE_URL="https://yylrfxpjbxefavcmjvho.supabase.co"  # Optional, defaults to Firefly project
    ```
 
-2. **Python Dependencies**: Install required packages:
+3. **Python Dependencies**: Install required packages:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Reference Data**: The pipeline uses two reference data files located in the repository root:
+4. **Reference Data**: The pipeline uses two reference data files located in the repository root:
    - `fx_rates.csv` - Foreign exchange rates for currency conversion
    - `stage_mapping.csv` - Mapping from Salesforce stages to standardized stages
 

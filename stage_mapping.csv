@@ -1,0 +1,7 @@
+source_stage,std_stage
+Prospecting,Pipeline
+Qualification,Pipeline
+Proposal,Pipeline
+Negotiation,Commit
+Closed Won,ClosedWon
+Closed Lost,ClosedLost

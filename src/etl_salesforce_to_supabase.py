@@ -53,12 +53,18 @@ def extract_salesforce_data(credentials: Dict[str, str]) -> Tuple[List[Dict], Li
     
     print("Querying Opportunities...")
     opp_query = """
-        SELECT Id, AccountId, Name, StageName, Amount, CurrencyIsoCode, Probability,
-               CloseDate, CreatedDate, LastModifiedDate, OwnerEmail, Phone, IsWon, IsClosed
+        SELECT Id, AccountId, Name, StageName, Amount, Probability,
+               CloseDate, CreatedDate, LastModifiedDate, IsWon, IsClosed, OwnerId
         FROM Opportunity
     """
     opp_result = sf.query_all(opp_query)
     opp_records = opp_result['records']
+    
+    for record in opp_records:
+        record['CurrencyIsoCode'] = 'USD'
+        record['OwnerEmail'] = ''
+        record['Phone'] = ''
+    
     print(f"✓ Extracted {len(opp_records)} opportunities")
     
     print("Querying Accounts...")
@@ -78,6 +84,12 @@ def save_records_to_csv(records: List[Dict], filepath: Path) -> None:
     ]
     
     df = pd.DataFrame(clean_records)
+    
+    datetime_cols = ['CreatedDate', 'LastModifiedDate', 'CloseDate']
+    for col in datetime_cols:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], utc=True).dt.tz_localize(None)
+    
     df.to_csv(filepath, index=False)
 
 

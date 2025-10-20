@@ -97,6 +97,61 @@ CREATE TABLE SALES_OPPORTUNITY_FACT (
 - Stage mapping is demo-grade; extend to your enterprise taxonomy.
 - Does not implement SCD2 in this demo.
 
+## Automated Salesforce to Supabase ETL Pipeline
+
+This repository now includes an automated ETL pipeline that extracts data directly from Salesforce and loads it into Supabase, bypassing the need for manual CSV exports.
+
+### Setup
+
+The pipeline requires the following environment variables to be set:
+
+- `SALESFORCE_URL` - Your Salesforce instance URL (e.g., `https://your-instance.salesforce.com`)
+- `SALESFORCE_USERNAME` - Your Salesforce username
+- `SALESFORCE_PASSWORD` - Your Salesforce password  
+- `SALESFORCE_SECURITY_TOKEN` - Your Salesforce security token
+
+### Running the Pipeline
+
+```bash
+cd ~/repos/business-logic
+source .venv/bin/activate
+python -m src.salesforce_supabase_etl
+```
+
+The pipeline will:
+1. Authenticate with Salesforce using the provided credentials
+2. Extract Opportunity and Account data from your Salesforce org
+3. Apply the same transformation logic as the CSV-based pipeline
+4. Write results to two Supabase tables:
+   - `opportunities_transformed` - Canonical, transformed opportunity facts
+   - `opportunities_anomalies` - Data quality issues detected during transformation
+
+### Key Features
+
+- **Dynamic field detection**: Automatically adapts to your Salesforce org's available fields
+- **Resilient extraction**: Handles missing optional fields (e.g., CurrencyIsoCode, Phone, Industry)
+- **Batch processing**: Efficiently loads data into Supabase in batches
+- **Full audit trail**: All records timestamped with `_created_at` in Supabase
+- **Uses existing business logic**: Leverages the same transformation pipeline and quality checks as the CSV-based approach
+
+### Architecture
+
+```
+src/salesforce_supabase_etl.py    # Main ETL orchestration script
+  ├── authenticate_salesforce()    # Salesforce OAuth authentication
+  ├── extract_opportunities()      # Query Salesforce Opportunity data
+  ├── extract_accounts()           # Query Salesforce Account data  
+  ├── run_pipeline()               # Apply transformations (from transformations.py)
+  ├── anomaly_rules()              # Apply quality checks (from quality_checks.py)
+  └── write_to_supabase()          # Write to Supabase via MCP
+```
+
+The pipeline integrates with:
+- **simple-salesforce** library for Salesforce API authentication
+- **Supabase MCP** for table creation and data insertion
+- Existing transformation logic in `src/transformations.py`
+- Existing quality checks in `src/quality_checks.py`
+
 ---
 
 **Author:** Generated for demo purposes.
